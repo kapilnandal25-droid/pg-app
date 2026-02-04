@@ -1,32 +1,63 @@
 import streamlit as st
 import pandas as pd
-import os
-from datetime import datetime
+import gspread
 
 # --- CONFIGURATION ---
-DATA_FILE = "pg_data.csv"
+SHEET_NAME = "PG_Data_Master"  # Must match your Google Sheet Name exactly
 
-# --- BACKEND FUNCTIONS ---
+# --- BACKEND FUNCTIONS (GOOGLE SHEETS) ---
+def connect_to_sheet():
+    # Connect using the secrets you saved in Streamlit Cloud
+    gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
+    sh = gc.open(SHEET_NAME)
+    return sh.sheet1
+
 def load_data():
-    if not os.path.exists(DATA_FILE):
-        # Create a new dataframe if file doesn't exist
-        df = pd.DataFrame(columns=[
+    worksheet = connect_to_sheet()
+    data = worksheet.get_all_records()
+    
+    if not data:
+        # Return empty dataframe with columns if sheet is empty
+        return pd.DataFrame(columns=[
             "Tenant Name", "Room Number", "Phone", 
             "Rent Amount", "Move-In Date", "Last Rent Paid (Month)", "Status"
         ])
-        df.to_csv(DATA_FILE, index=False)
-        return df
-    return pd.read_csv(DATA_FILE)
+    
+    return pd.DataFrame(data)
 
-def save_data(df):
-    df.to_csv(DATA_FILE, index=False)
+def save_new_tenant(tenant_data):
+    worksheet = connect_to_sheet()
+    # Convert dictionary values to a list
+    row = [
+        tenant_data["Tenant Name"],
+        tenant_data["Room Number"],
+        tenant_data["Phone"],
+        tenant_data["Rent Amount"],
+        str(tenant_data["Move-In Date"]),
+        tenant_data["Last Rent Paid (Month)"],
+        tenant_data["Status"]
+    ]
+    # Append row to Google Sheet
+    worksheet.append_row(row)
+
+def update_rent_payment(tenant_name, month):
+    worksheet = connect_to_sheet()
+    # Find the cell to update (This is a simple search)
+    cell = worksheet.find(tenant_name)
+    if cell:
+        # Assuming "Last Rent Paid" is the 6th column (Column F)
+        worksheet.update_cell(cell.row, 6, month)
 
 # --- USER INTERFACE ---
-st.set_page_config(page_title="PG Manager", page_icon="🏠")
-st.title("🏠 My PG Management System")
+st.set_page_config(page_title="PG Manager Cloud", page_icon="☁️")
+st.title("☁️ My PG Management System (Live)")
 
-# Load data
-df = load_data()
+# Load data fresh from Google Sheets
+try:
+    df = load_data()
+except Exception as e:
+    st.error(f"Error connecting to Google Sheets: {e}")
+    st.stop()
 
 # Sidebar Menu
 menu = st.sidebar.selectbox("Menu", ["Dashboard", "Add New Tenant", "Manage Payments", "Tenant List"])
@@ -35,27 +66,14 @@ menu = st.sidebar.selectbox("Menu", ["Dashboard", "Add New Tenant", "Manage Paym
 if menu == "Dashboard":
     st.subheader("Business Overview")
     
-    # Calculate Metrics
     total_tenants = len(df)
-    total_revenue = df['Rent Amount'].sum() if not df.empty else 0
+    # Ensure Rent Amount is numeric for calculation
+    df['Rent Amount'] = pd.to_numeric(df['Rent Amount'], errors='coerce').fillna(0)
+    total_revenue = df['Rent Amount'].sum()
     
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     col1.metric("Total Tenants", total_tenants)
-    col2.metric("Monthly Revenue Potential", f"₹{total_revenue:,}")
-    
-    # Quick Alert for Unpaid Rent
-    st.write("---")
-    st.subheader("⚠️ Payment Alerts")
-    current_month = datetime.now().strftime("%B")
-    
-    # Simple logic: If 'Last Rent Paid' is not current month, flag them
-    if not df.empty:
-        unpaid_tenants = df[df["Last Rent Paid (Month)"] != current_month]
-        if not unpaid_tenants.empty:
-            st.error(f"{len(unpaid_tenants)} tenants have not paid for {current_month} yet!")
-            st.dataframe(unpaid_tenants[["Tenant Name", "Room Number", "Phone"]])
-        else:
-            st.success("Everyone has paid for this month!")
+    col2.metric("Monthly Revenue", f"₹{total_revenue:,}")
 
 # --- 2. ADD NEW TENANT ---
 elif menu == "Add New Tenant":
@@ -67,7 +85,7 @@ elif menu == "Add New Tenant":
         rent = st.number_input("Monthly Rent Amount", min_value=0, step=500)
         move_in = st.date_input("Move-In Date")
         
-        submitted = st.form_submit_button("Add Tenant")
+        submitted = st.form_submit_button("Add Tenant to Cloud")
         
         if submitted:
             if name and room:
@@ -80,9 +98,9 @@ elif menu == "Add New Tenant":
                     "Last Rent Paid (Month)": "None",
                     "Status": "Active"
                 }
-                df = pd.concat([df, pd.DataFrame([new_data])], ignore_index=True)
-                save_data(df)
-                st.success(f"{name} added successfully!")
+                save_new_tenant(new_data)
+                st.success(f"{name} saved to Google Sheet!")
+                st.rerun()
             else:
                 st.warning("Please fill in Name and Room Number.")
 
@@ -91,37 +109,24 @@ elif menu == "Manage Payments":
     st.subheader("Update Rent Status")
     
     if df.empty:
-        st.info("No tenants found. Go to 'Add New Tenant' first.")
+        st.info("No tenants found.")
     else:
-        # Select Tenant
         tenant_list = df["Tenant Name"].tolist()
         selected_tenant = st.selectbox("Select Tenant", tenant_list)
         
-        # Select Month
         months = ["January", "February", "March", "April", "May", "June", 
                   "July", "August", "September", "October", "November", "December"]
-        current_month_index = datetime.now().month - 1
-        selected_month = st.selectbox("Select Month to Mark Paid", months, index=current_month_index)
+        selected_month = st.selectbox("Select Month to Mark Paid", months)
         
         if st.button("Mark as PAID"):
-            # Update the specific row
-            df.loc[df["Tenant Name"] == selected_tenant, "Last Rent Paid (Month)"] = selected_month
-            save_data(df)
-            st.success(f"Rent marked as PAID for {selected_tenant} ({selected_month})")
-            st.balloons()
+            update_rent_payment(selected_tenant, selected_month)
+            st.success(f"Updated Google Sheet for {selected_tenant}")
+            st.rerun()
 
 # --- 4. TENANT LIST ---
 elif menu == "Tenant List":
-    st.subheader("Master Database")
+    st.subheader("Master Database (From Google Sheets)")
     st.dataframe(df)
     
-    # Delete Option
-    st.write("---")
-    st.write("**Remove Tenant**")
-    if not df.empty:
-        t_to_delete = st.selectbox("Select Tenant to Remove", df["Tenant Name"].unique())
-        if st.button("Delete Tenant"):
-            df = df[df["Tenant Name"] != t_to_delete]
-            save_data(df)
-            st.warning(f"{t_to_delete} has been removed.")
-            st.rerun()
+    if st.button("Refresh Data"):
+        st.rerun()
