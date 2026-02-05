@@ -7,42 +7,36 @@ from datetime import datetime
 # --- CONFIGURATION ---
 SHEET_NAME = "PG_Data_Master"
 
-# --- PAGE SETUP (Browser Tab Name) ---
-# CHANGE "PG Manager Pro" below to your app name
-st.set_page_config(page_title="Nandal Boys PG", page_icon="🔒")
+# --- PAGE SETUP ---
+st.set_page_config(page_title="Total Finance Manager", page_icon="💰")
 
 # --- 🔒 SECURITY SYSTEM 🔒 ---
 def check_password():
-    """Returns True if the user had entered the correct password."""
     def password_entered():
         if st.session_state["password"] == st.secrets["auth"]["password"]:
             st.session_state["password_correct"] = True
-            del st.session_state["password"]  # Don't keep password in memory
+            del st.session_state["password"]
         else:
             st.session_state["password_correct"] = False
 
     if "password_correct" not in st.session_state:
-        # First run, show input
         st.text_input("Enter Password", type="password", on_change=password_entered, key="password")
         return False
     elif not st.session_state["password_correct"]:
-        # Password incorrect, show input again
         st.text_input("Enter Password", type="password", on_change=password_entered, key="password")
         st.error("😕 Password incorrect")
         return False
     else:
-        # Password correct
         return True
 
 if not check_password():
-    st.stop()  # STOP here if password is wrong. Don't load anything else!
+    st.stop()
 
 # =========================================================
-#  🏁 MAIN APP STARTS HERE (Only loads if password is okay)
+#  🏁 MAIN APP STARTS HERE
 # =========================================================
 
-# CHANGE "My PG Dashboard" below to your Main Title
-st.title("🤝 Nandal Boys PG")
+st.title("💰 Total Finance Manager")
 
 # --- BACKEND FUNCTIONS ---
 def get_worksheet(tab_name):
@@ -54,8 +48,12 @@ def load_data(tab_name):
     worksheet = get_worksheet(tab_name)
     data = worksheet.get_all_records()
     df = pd.DataFrame(data)
-    if "Promised Date" not in df.columns and tab_name == "Tenants":
-        df["Promised Date"] = ""
+    
+    if tab_name == "Tenants":
+        if "Promised Date" not in df.columns: df["Promised Date"] = ""
+    elif tab_name == "Expenses":
+        if "Type" not in df.columns: df["Type"] = "Business" 
+        
     return df
 
 def save_new_tenant(tenant_data):
@@ -72,7 +70,8 @@ def save_expense(expense_data):
     worksheet = get_worksheet("Expenses")
     row = [
         str(expense_data["Date"]), expense_data["Category"],
-        expense_data["Amount"], expense_data["Note"]
+        expense_data["Amount"], expense_data["Note"],
+        expense_data["Type"]
     ]
     worksheet.append_row(row)
 
@@ -97,31 +96,56 @@ except Exception as e:
     st.error(f"Connection Error: {e}")
     st.stop()
 
-# --- SIDEBAR & MENU ---
+# --- SIDEBAR ---
 if st.sidebar.button("🔒 Logout"):
     del st.session_state["password_correct"]
     st.rerun()
 
 menu = st.sidebar.selectbox("Menu", ["Dashboard", "Add Tenant", "Manage Rent", "Expense Tracker", "All Records"])
 
-# --- 1. DASHBOARD ---
+# --- 1. DASHBOARD (UPDATED FOR 3 SEPARATE CATEGORIES) ---
 if menu == "Dashboard":
-    st.subheader("💰 Financial Health")
+    # 1. Calculate Business Revenue
     df_tenants['Rent Amount'] = pd.to_numeric(df_tenants['Rent Amount'], errors='coerce').fillna(0)
     total_revenue = df_tenants['Rent Amount'].sum()
     
+    # 2. Separate Expenses by Type
+    business_expenses = 0
+    personal_expenses = 0
+    home_expenses = 0
+    
     if not df_expenses.empty:
         df_expenses['Amount'] = pd.to_numeric(df_expenses['Amount'], errors='coerce').fillna(0)
-        total_expenses = df_expenses['Amount'].sum()
-    else:
-        total_expenses = 0
-        
-    net_profit = total_revenue - total_expenses
+        if 'Type' not in df_expenses.columns:
+            df_expenses['Type'] = "Business"
+            
+        # Filter Logic - 3 Separate Buckets
+        business_expenses = df_expenses[df_expenses['Type'] == 'Business']['Amount'].sum()
+        personal_expenses = df_expenses[df_expenses['Type'] == 'Personal']['Amount'].sum()
+        home_expenses = df_expenses[df_expenses['Type'] == 'Home']['Amount'].sum()
     
+    net_profit = total_revenue - business_expenses
+    
+    # 3. Display Business Stats
+    st.subheader("🏢 PG Business Status")
     col1, col2, col3 = st.columns(3)
     col1.metric("Revenue", f"₹{total_revenue:,}")
-    col2.metric("Expenses", f"₹{total_expenses:,}")
-    col3.metric("Profit", f"₹{net_profit:,}")
+    col2.metric("PG Expenses", f"₹{business_expenses:,}")
+    col3.metric("Net Profit", f"₹{net_profit:,}")
+    
+    st.divider() # Adds a nice visual line separator
+    
+    # 4. Display Private Stats (Separated)
+    st.subheader("🏠 Private Spending")
+    colA, colB = st.columns(2)
+    
+    with colA:
+        st.metric("🏠 Home/Family", f"₹{home_expenses:,}")
+        st.caption("Groceries, Bills, Kids, etc.")
+        
+    with colB:
+        st.metric("👤 Personal", f"₹{personal_expenses:,}")
+        st.caption("Shopping, Travel, Fun, etc.")
 
 # --- 2. ADD TENANT ---
 elif menu == "Add Tenant":
@@ -129,8 +153,7 @@ elif menu == "Add Tenant":
     with st.form("add_tenant"):
         name = st.text_input("Name")
         room = st.text_input("Room")
-        phone = st.text_input("Phone (Format: 919876543210)")
-        st.caption("⚠️ Add 91, no + symbol.")
+        phone = st.text_input("Phone (91...)")
         rent = st.number_input("Rent", step=500)
         move_in = st.date_input("Date")
         if st.form_submit_button("Save"):
@@ -144,79 +167,83 @@ elif menu == "Add Tenant":
 
 # --- 3. MANAGE RENT ---
 elif menu == "Manage Rent":
-    st.subheader("Record Promises & Send Reminders")
-    
+    st.subheader("Rent & Reminders")
     if not df_tenants.empty:
         tenant_name = st.selectbox("Select Tenant", df_tenants["Tenant Name"].tolist())
         tenant_row = df_tenants[df_tenants["Tenant Name"] == tenant_name].iloc[0]
         phone_number = str(tenant_row["Phone"])
         rent_amt = tenant_row["Rent Amount"]
-        move_in_str = str(tenant_row["Move-In Date"])
         
         if "Promised Date" in tenant_row and str(tenant_row["Promised Date"]).strip() != "":
             existing_promise = str(tenant_row["Promised Date"])
         else:
             existing_promise = None
-
-        try:
-            move_in_date = datetime.strptime(move_in_str, "%Y-%m-%d")
-            due_day = move_in_date.day
-            current_month_name = datetime.now().strftime("%B")
-            due_date_text = f"{due_day}th {current_month_name}"
-        except:
-            due_date_text = "5th of this month" 
-
+            
         st.write("---")
-        col_info1, col_info2 = st.columns(2)
-        col_info1.info(f"📅 **Due Date:** {due_date_text}")
         if existing_promise:
-            col_info2.warning(f"🤝 **Promised:** {existing_promise}")
+            st.warning(f"Tenant Promised: {existing_promise}")
         else:
-            col_info2.success("✅ No delay.")
+            st.success("No delays.")
 
         tab_pay, tab_promise = st.tabs(["💵 Mark Paid", "🤝 Record Promise"])
-        
         with tab_pay:
             month = st.selectbox("Select Month", ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"])
             if st.button("Mark as PAID"):
                 update_rent_payment(tenant_name, month)
-                st.balloons()
                 st.success(f"Updated!")
                 st.rerun()
-
         with tab_promise:
-            new_promise_date = st.date_input("Tenant Promised Date")
+            new_promise_date = st.date_input("Promised Date")
             if st.button("Save Promise"):
                 update_promise_date(tenant_name, new_promise_date)
                 st.success(f"Saved!")
                 st.rerun()
 
-        st.write("---")
-        st.subheader("💬 Send Smart Reminder")
-        
         if existing_promise:
-            raw_msg = f"Hi {tenant_name}, this is a reminder that you promised to pay your rent of ₹{rent_amt} by {existing_promise}. Please clear it today. Thanks!"
+            raw_msg = f"Hi {tenant_name}, reminder: you promised to pay rent of ₹{rent_amt} by {existing_promise}."
         else:
-            raw_msg = f"Hi {tenant_name}, your rent of ₹{rent_amt} is due on {due_date_text}. Please pay on time. Thanks!"
-
-        encoded_msg = urllib.parse.quote(raw_msg)
-        wa_link = f"https://wa.me/{phone_number}?text={encoded_msg}"
-        st.markdown(f"## [👉 Click to Send WhatsApp]({wa_link})")
+            raw_msg = f"Hi {tenant_name}, your rent of ₹{rent_amt} is due soon."
+        
+        wa_link = f"https://wa.me/{phone_number}?text={urllib.parse.quote(raw_msg)}"
+        st.markdown(f"## [👉 WhatsApp Reminder]({wa_link})")
 
 # --- 4. EXPENSE TRACKER ---
 elif menu == "Expense Tracker":
-    st.subheader("💸 Record Expense")
+    st.subheader("💸 Record New Expense")
+    
     with st.form("add_expense"):
-        date = st.date_input("Date")
-        category = st.selectbox("Category", ["Electricity", "Internet", "Cleaning", "Repairs", "Other"])
-        amount = st.number_input("Amount", step=100)
-        note = st.text_input("Note")
-        if st.form_submit_button("Save"):
-            save_expense({"Date": date, "Category": category, "Amount": amount, "Note": note})
-            st.success("Saved!")
+        # Select Type
+        expense_type = st.radio("Who is this expense for?", ["Business", "Home", "Personal"], horizontal=True)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            date = st.date_input("Date")
+            amount = st.number_input("Amount (₹)", step=100)
+        with col2:
+            category = st.selectbox("Category", ["Electricity", "Internet", "Food/Groceries", "Repairs", "Shopping", "Fuel", "School Fees", "Other"])
+            note = st.text_input("Note (Optional)")
+            
+        if st.form_submit_button("Save Expense"):
+            save_expense({
+                "Date": date, 
+                "Category": category, 
+                "Amount": amount, 
+                "Note": note,
+                "Type": expense_type
+            })
+            st.success(f"Saved to {expense_type} Expenses!")
             st.rerun()
 
 # --- 5. ALL RECORDS ---
 elif menu == "All Records":
-    st.dataframe(df_tenants)
-    st.dataframe(df_expenses)
+    st.subheader("📋 All Records")
+    tab1, tab2 = st.tabs(["Tenants", "Expenses"])
+    with tab1:
+        st.dataframe(df_tenants)
+    with tab2:
+        filter_type = st.selectbox("Filter Expenses by:", ["All", "Business", "Home", "Personal"])
+        if not df_expenses.empty:
+            if filter_type != "All":
+                st.dataframe(df_expenses[df_expenses['Type'] == filter_type])
+            else:
+                st.dataframe(df_expenses)
