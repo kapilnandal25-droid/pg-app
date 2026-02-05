@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import gspread
+import urllib.parse  # <--- NEW TOOL: To fix the broken message
 
 # --- CONFIGURATION ---
 SHEET_NAME = "PG_Data_Master"
@@ -91,15 +92,14 @@ elif menu == "Add Tenant":
             st.success("Saved!")
             st.rerun()
 
-# --- 3. MANAGE RENT (UPDATED WITH WHATSAPP) ---
+# --- 3. MANAGE RENT (FIXED MESSAGE) ---
 elif menu == "Manage Rent":
     st.subheader("Record Rent & Send Reminders")
     
     if not df_tenants.empty:
-        # Select Tenant
         tenant_name = st.selectbox("Select Tenant", df_tenants["Tenant Name"].tolist())
         
-        # Get Tenant Details automatically
+        # Get Tenant Details
         tenant_row = df_tenants[df_tenants["Tenant Name"] == tenant_name].iloc[0]
         phone_number = str(tenant_row["Phone"])
         rent_amt = tenant_row["Rent Amount"]
@@ -117,15 +117,17 @@ elif menu == "Manage Rent":
         # WhatsApp Section
         with col2:
             st.write("### 💬 Reminder")
-            # Create the message
-            msg = f"Hi {tenant_name}, this is a reminder that your rent of ₹{rent_amt} for this month is due. Please pay soon to avoid late fees. Thanks!"
+            # 1. Create the plain message
+            raw_msg = f"Hi {tenant_name}, this is a reminder that your rent of ₹{rent_amt} for this month is due. Please pay soon. Thanks!"
             
-            # Create the WhatsApp Link
-            # Uses https://wa.me/NUMBER?text=MESSAGE format
-            wa_link = f"https://wa.me/{phone_number}?text={msg}"
+            # 2. ENCODE the message (Convert spaces to special code)
+            encoded_msg = urllib.parse.quote(raw_msg)
+            
+            # 3. Create the link
+            wa_link = f"https://wa.me/{phone_number}?text={encoded_msg}"
             
             st.markdown(f"[👉 **Click to Send WhatsApp**]({wa_link})")
-            st.caption("Clicking this opens WhatsApp on your phone.")
+            st.caption(f"Phone: {phone_number}")
 
 # --- 4. EXPENSE TRACKER ---
 elif menu == "Expense Tracker":
