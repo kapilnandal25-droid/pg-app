@@ -3,130 +3,138 @@ import pandas as pd
 import gspread
 
 # --- CONFIGURATION ---
-SHEET_NAME = "PG_Data_Master"  # Must match your Google Sheet Name exactly
+SHEET_NAME = "PG_Data_Master"  # Your Google Sheet Name
 
-# --- BACKEND FUNCTIONS (GOOGLE SHEETS) ---
-def connect_to_sheet():
-    # Connect using the secrets you saved in Streamlit Cloud
+# --- BACKEND FUNCTIONS ---
+def get_worksheet(tab_name):
+    # Connect to a specific tab (Tenants or Expenses)
     gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
     sh = gc.open(SHEET_NAME)
-    return sh.sheet1
+    return sh.worksheet(tab_name)
 
-def load_data():
-    worksheet = connect_to_sheet()
+def load_data(tab_name):
+    worksheet = get_worksheet(tab_name)
     data = worksheet.get_all_records()
-    
-    if not data:
-        # Return empty dataframe with columns if sheet is empty
-        return pd.DataFrame(columns=[
-            "Tenant Name", "Room Number", "Phone", 
-            "Rent Amount", "Move-In Date", "Last Rent Paid (Month)", "Status"
-        ])
-    
     return pd.DataFrame(data)
 
 def save_new_tenant(tenant_data):
-    worksheet = connect_to_sheet()
-    # Convert dictionary values to a list
+    worksheet = get_worksheet("Tenants") # Specifically save to Tenants tab
     row = [
-        tenant_data["Tenant Name"],
-        tenant_data["Room Number"],
-        tenant_data["Phone"],
-        tenant_data["Rent Amount"],
-        str(tenant_data["Move-In Date"]),
-        tenant_data["Last Rent Paid (Month)"],
+        tenant_data["Tenant Name"], tenant_data["Room Number"],
+        tenant_data["Phone"], tenant_data["Rent Amount"],
+        str(tenant_data["Move-In Date"]), tenant_data["Last Rent Paid (Month)"],
         tenant_data["Status"]
     ]
-    # Append row to Google Sheet
+    worksheet.append_row(row)
+
+def save_expense(expense_data):
+    worksheet = get_worksheet("Expenses") # Specifically save to Expenses tab
+    row = [
+        str(expense_data["Date"]),
+        expense_data["Category"],
+        expense_data["Amount"],
+        expense_data["Note"]
+    ]
     worksheet.append_row(row)
 
 def update_rent_payment(tenant_name, month):
-    worksheet = connect_to_sheet()
-    # Find the cell to update (This is a simple search)
+    worksheet = get_worksheet("Tenants")
     cell = worksheet.find(tenant_name)
     if cell:
-        # Assuming "Last Rent Paid" is the 6th column (Column F)
         worksheet.update_cell(cell.row, 6, month)
 
 # --- USER INTERFACE ---
-st.set_page_config(page_title="PG Manager Cloud", page_icon="☁️")
-st.title("☁️ My PG Management System (Live)")
+st.set_page_config(page_title="PG Manager Pro", page_icon="📈")
+st.title("📈 PG Business Manager 2.0")
 
-# Load data fresh from Google Sheets
+# Load Data safely
 try:
-    df = load_data()
+    df_tenants = load_data("Tenants")
+    df_expenses = load_data("Expenses")
 except Exception as e:
-    st.error(f"Error connecting to Google Sheets: {e}")
+    st.error(f"Error connecting to Google Sheets. Did you create the 'Expenses' tab? Error: {e}")
     st.stop()
 
-# Sidebar Menu
-menu = st.sidebar.selectbox("Menu", ["Dashboard", "Add New Tenant", "Manage Payments", "Tenant List"])
+# Sidebar
+menu = st.sidebar.selectbox("Menu", ["Dashboard", "Add Tenant", "Manage Rent", "Expense Tracker", "All Records"])
 
-# --- 1. DASHBOARD ---
+# --- 1. DASHBOARD (PROFIT & LOSS) ---
 if menu == "Dashboard":
-    st.subheader("Business Overview")
+    st.subheader("💰 Financial Health")
     
-    total_tenants = len(df)
-    # Ensure Rent Amount is numeric for calculation
-    df['Rent Amount'] = pd.to_numeric(df['Rent Amount'], errors='coerce').fillna(0)
-    total_revenue = df['Rent Amount'].sum()
+    # Calculate Revenue (Rent)
+    df_tenants['Rent Amount'] = pd.to_numeric(df_tenants['Rent Amount'], errors='coerce').fillna(0)
+    total_revenue = df_tenants['Rent Amount'].sum()
     
-    col1, col2 = st.columns(2)
-    col1.metric("Total Tenants", total_tenants)
-    col2.metric("Monthly Revenue", f"₹{total_revenue:,}")
-
-# --- 2. ADD NEW TENANT ---
-elif menu == "Add New Tenant":
-    st.subheader("Register New Customer")
-    with st.form("add_tenant_form"):
-        name = st.text_input("Full Name")
-        room = st.text_input("Room Number")
-        phone = st.text_input("Phone Number")
-        rent = st.number_input("Monthly Rent Amount", min_value=0, step=500)
-        move_in = st.date_input("Move-In Date")
-        
-        submitted = st.form_submit_button("Add Tenant to Cloud")
-        
-        if submitted:
-            if name and room:
-                new_data = {
-                    "Tenant Name": name,
-                    "Room Number": room,
-                    "Phone": phone,
-                    "Rent Amount": rent,
-                    "Move-In Date": move_in,
-                    "Last Rent Paid (Month)": "None",
-                    "Status": "Active"
-                }
-                save_new_tenant(new_data)
-                st.success(f"{name} saved to Google Sheet!")
-                st.rerun()
-            else:
-                st.warning("Please fill in Name and Room Number.")
-
-# --- 3. MANAGE PAYMENTS ---
-elif menu == "Manage Payments":
-    st.subheader("Update Rent Status")
-    
-    if df.empty:
-        st.info("No tenants found.")
+    # Calculate Expenses
+    if not df_expenses.empty:
+        df_expenses['Amount'] = pd.to_numeric(df_expenses['Amount'], errors='coerce').fillna(0)
+        total_expenses = df_expenses['Amount'].sum()
     else:
-        tenant_list = df["Tenant Name"].tolist()
-        selected_tenant = st.selectbox("Select Tenant", tenant_list)
+        total_expenses = 0
         
-        months = ["January", "February", "March", "April", "May", "June", 
-                  "July", "August", "September", "October", "November", "December"]
-        selected_month = st.selectbox("Select Month to Mark Paid", months)
-        
-        if st.button("Mark as PAID"):
-            update_rent_payment(selected_tenant, selected_month)
-            st.success(f"Updated Google Sheet for {selected_tenant}")
+    net_profit = total_revenue - total_expenses
+    
+    # Display Metrics
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Expected Revenue", f"₹{total_revenue:,}")
+    col2.metric("Total Expenses", f"₹{total_expenses:,}")
+    col3.metric("Net Profit", f"₹{net_profit:,}", delta_color="normal")
+    
+    if net_profit > 0:
+        st.success("You are profitable! 🎉")
+    else:
+        st.warning("Expenses are higher than revenue. ⚠️")
+
+# --- 2. ADD TENANT ---
+elif menu == "Add Tenant":
+    st.subheader("Add New Tenant")
+    with st.form("add_tenant"):
+        name = st.text_input("Name")
+        room = st.text_input("Room")
+        phone = st.text_input("Phone")
+        rent = st.number_input("Rent", step=500)
+        move_in = st.date_input("Date")
+        if st.form_submit_button("Save Tenant"):
+            save_new_tenant({
+                "Tenant Name": name, "Room Number": room, "Phone": phone,
+                "Rent Amount": rent, "Move-In Date": move_in,
+                "Last Rent Paid (Month)": "None", "Status": "Active"
+            })
+            st.success("Tenant Added!")
             st.rerun()
 
-# --- 4. TENANT LIST ---
-elif menu == "Tenant List":
-    st.subheader("Master Database (From Google Sheets)")
-    st.dataframe(df)
-    
-    if st.button("Refresh Data"):
-        st.rerun()
+# --- 3. MANAGE RENT ---
+elif menu == "Manage Rent":
+    st.subheader("Record Rent Payment")
+    if not df_tenants.empty:
+        tenant = st.selectbox("Tenant", df_tenants["Tenant Name"].tolist())
+        month = st.selectbox("Month", ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"])
+        if st.button("Mark Paid"):
+            update_rent_payment(tenant, month)
+            st.success("Updated!")
+
+# --- 4. EXPENSE TRACKER ---
+elif menu == "Expense Tracker":
+    st.subheader("💸 Record an Expense")
+    with st.form("add_expense"):
+        date = st.date_input("Date")
+        category = st.selectbox("Category", ["Electricity Bill", "Internet", "Maid/Cleaning", "Repairs", "Groceries", "Other"])
+        amount = st.number_input("Amount (₹)", min_value=0, step=100)
+        note = st.text_input("Note (Optional)")
+        
+        if st.form_submit_button("Add Expense"):
+            save_expense({
+                "Date": date, "Category": category, 
+                "Amount": amount, "Note": note
+            })
+            st.success("Expense Saved!")
+            st.rerun()
+
+# --- 5. ALL RECORDS ---
+elif menu == "All Records":
+    tab1, tab2 = st.tabs(["Tenants", "Expenses"])
+    with tab1:
+        st.dataframe(df_tenants)
+    with tab2:
+        st.dataframe(df_expenses)
