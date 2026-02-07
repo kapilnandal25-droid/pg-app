@@ -8,7 +8,7 @@ from datetime import datetime
 SHEET_NAME = "PG_Data_Master"
 
 # --- PAGE SETUP ---
-st.set_page_config(page_title="Total Finance Manager", page_icon="💰")
+st.set_page_config(page_title="My Finance Manager", page_icon="💰")
 
 # --- 🔒 SECURITY SYSTEM 🔒 ---
 def check_password():
@@ -103,7 +103,7 @@ if st.sidebar.button("🔒 Logout"):
 
 menu = st.sidebar.selectbox("Menu", ["Dashboard", "Add Tenant", "Manage Rent", "Expense Tracker", "All Records"])
 
-# --- 1. DASHBOARD (UPDATED FOR 3 SEPARATE CATEGORIES) ---
+# --- 1. DASHBOARD ---
 if menu == "Dashboard":
     # 1. Calculate Business Revenue
     df_tenants['Rent Amount'] = pd.to_numeric(df_tenants['Rent Amount'], errors='coerce').fillna(0)
@@ -119,7 +119,6 @@ if menu == "Dashboard":
         if 'Type' not in df_expenses.columns:
             df_expenses['Type'] = "Business"
             
-        # Filter Logic - 3 Separate Buckets
         business_expenses = df_expenses[df_expenses['Type'] == 'Business']['Amount'].sum()
         personal_expenses = df_expenses[df_expenses['Type'] == 'Personal']['Amount'].sum()
         home_expenses = df_expenses[df_expenses['Type'] == 'Home']['Amount'].sum()
@@ -133,19 +132,15 @@ if menu == "Dashboard":
     col2.metric("PG Expenses", f"₹{business_expenses:,}")
     col3.metric("Net Profit", f"₹{net_profit:,}")
     
-    st.divider() # Adds a nice visual line separator
+    st.divider() 
     
-    # 4. Display Private Stats (Separated)
+    # 4. Display Private Stats
     st.subheader("🏠 Private Spending")
     colA, colB = st.columns(2)
-    
     with colA:
         st.metric("🏠 Home/Family", f"₹{home_expenses:,}")
-        st.caption("Groceries, Bills, Kids, etc.")
-        
     with colB:
         st.metric("👤 Personal", f"₹{personal_expenses:,}")
-        st.caption("Shopping, Travel, Fun, etc.")
 
 # --- 2. ADD TENANT ---
 elif menu == "Add Tenant":
@@ -212,9 +207,7 @@ elif menu == "Expense Tracker":
     st.subheader("💸 Record New Expense")
     
     with st.form("add_expense"):
-        # Select Type
         expense_type = st.radio("Who is this expense for?", ["Business", "Home", "Personal"], horizontal=True)
-        
         col1, col2 = st.columns(2)
         with col1:
             date = st.date_input("Date")
@@ -225,21 +218,35 @@ elif menu == "Expense Tracker":
             
         if st.form_submit_button("Save Expense"):
             save_expense({
-                "Date": date, 
-                "Category": category, 
-                "Amount": amount, 
-                "Note": note,
-                "Type": expense_type
+                "Date": date, "Category": category, "Amount": amount, 
+                "Note": note, "Type": expense_type
             })
             st.success(f"Saved to {expense_type} Expenses!")
             st.rerun()
 
-# --- 5. ALL RECORDS ---
+# --- 5. ALL RECORDS (UPDATED WITH ROOM FILTER) ---
 elif menu == "All Records":
     st.subheader("📋 All Records")
-    tab1, tab2 = st.tabs(["Tenants", "Expenses"])
+    tab1, tab2 = st.tabs(["Tenants (By Room)", "Expenses"])
+    
     with tab1:
-        st.dataframe(df_tenants)
+        # Get list of rooms
+        if not df_tenants.empty:
+            unique_rooms = sorted(df_tenants["Room Number"].astype(str).unique())
+            
+            # Create a Filter Box
+            selected_room = st.selectbox("🔍 Filter by Room Number:", ["Show All Rooms"] + unique_rooms)
+            
+            # Show Data based on selection
+            if selected_room == "Show All Rooms":
+                st.dataframe(df_tenants.sort_values(by="Room Number"))
+            else:
+                filtered_df = df_tenants[df_tenants["Room Number"].astype(str) == selected_room]
+                st.dataframe(filtered_df)
+                st.info(f"Showing {len(filtered_df)} tenant(s) in Room {selected_room}")
+        else:
+            st.warning("No tenants found.")
+
     with tab2:
         filter_type = st.selectbox("Filter Expenses by:", ["All", "Business", "Home", "Personal"])
         if not df_expenses.empty:
