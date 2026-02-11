@@ -160,47 +160,69 @@ elif menu == "Add Tenant":
             st.success("Saved!")
             st.rerun()
 
-# --- 3. MANAGE RENT ---
+# --- 3. MANAGE RENT (UPDATED WITH ROOM FILTER) ---
 elif menu == "Manage Rent":
     st.subheader("Rent & Reminders")
+    
     if not df_tenants.empty:
-        tenant_name = st.selectbox("Select Tenant", df_tenants["Tenant Name"].tolist())
-        tenant_row = df_tenants[df_tenants["Tenant Name"] == tenant_name].iloc[0]
-        phone_number = str(tenant_row["Phone"])
-        rent_amt = tenant_row["Rent Amount"]
+        # --- NEW: Room Filter ---
+        unique_rooms = sorted(df_tenants["Room Number"].astype(str).unique())
+        # Add "All Rooms" as the first option
+        selected_room = st.selectbox("🏠 Filter by Room:", ["All Rooms"] + unique_rooms)
         
-        if "Promised Date" in tenant_row and str(tenant_row["Promised Date"]).strip() != "":
-            existing_promise = str(tenant_row["Promised Date"])
+        # Filter the tenant list based on the selection
+        if selected_room != "All Rooms":
+            filtered_df = df_tenants[df_tenants["Room Number"].astype(str) == selected_room]
         else:
-            existing_promise = None
+            filtered_df = df_tenants
             
-        st.write("---")
-        if existing_promise:
-            st.warning(f"Tenant Promised: {existing_promise}")
-        else:
-            st.success("No delays.")
-
-        tab_pay, tab_promise = st.tabs(["💵 Mark Paid", "🤝 Record Promise"])
-        with tab_pay:
-            month = st.selectbox("Select Month", ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"])
-            if st.button("Mark as PAID"):
-                update_rent_payment(tenant_name, month)
-                st.success(f"Updated!")
-                st.rerun()
-        with tab_promise:
-            new_promise_date = st.date_input("Promised Date")
-            if st.button("Save Promise"):
-                update_promise_date(tenant_name, new_promise_date)
-                st.success(f"Saved!")
-                st.rerun()
-
-        if existing_promise:
-            raw_msg = f"Hi {tenant_name}, reminder: you promised to pay rent of ₹{rent_amt} by {existing_promise}."
-        else:
-            raw_msg = f"Hi {tenant_name}, your rent of ₹{rent_amt} is due soon."
+        # Get list of tenants from the filtered list
+        tenant_list = filtered_df["Tenant Name"].tolist()
         
-        wa_link = f"https://wa.me/{phone_number}?text={urllib.parse.quote(raw_msg)}"
-        st.markdown(f"## [👉 WhatsApp Reminder]({wa_link})")
+        if tenant_list:
+            tenant_name = st.selectbox("👤 Select Tenant", tenant_list)
+            
+            # --- The rest works exactly the same as before ---
+            tenant_row = df_tenants[df_tenants["Tenant Name"] == tenant_name].iloc[0]
+            phone_number = str(tenant_row["Phone"])
+            rent_amt = tenant_row["Rent Amount"]
+            
+            if "Promised Date" in tenant_row and str(tenant_row["Promised Date"]).strip() != "":
+                existing_promise = str(tenant_row["Promised Date"])
+            else:
+                existing_promise = None
+                
+            st.write("---")
+            if existing_promise:
+                st.warning(f"Tenant Promised: {existing_promise}")
+            else:
+                st.success("No delays.")
+
+            tab_pay, tab_promise = st.tabs(["💵 Mark Paid", "🤝 Record Promise"])
+            with tab_pay:
+                month = st.selectbox("Select Month", ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"])
+                if st.button("Mark as PAID"):
+                    update_rent_payment(tenant_name, month)
+                    st.success(f"Updated!")
+                    st.rerun()
+            with tab_promise:
+                new_promise_date = st.date_input("Promised Date")
+                if st.button("Save Promise"):
+                    update_promise_date(tenant_name, new_promise_date)
+                    st.success(f"Saved!")
+                    st.rerun()
+
+            if existing_promise:
+                raw_msg = f"Hi {tenant_name}, reminder: you promised to pay rent of ₹{rent_amt} by {existing_promise}."
+            else:
+                raw_msg = f"Hi {tenant_name}, your rent of ₹{rent_amt} is due soon."
+            
+            wa_link = f"https://wa.me/{phone_number}?text={urllib.parse.quote(raw_msg)}"
+            st.markdown(f"## [👉 WhatsApp Reminder]({wa_link})")
+        else:
+            st.warning("No tenants found in this room.")
+    else:
+        st.warning("No tenants found in database.")
 
 # --- 4. EXPENSE TRACKER ---
 elif menu == "Expense Tracker":
@@ -224,26 +246,19 @@ elif menu == "Expense Tracker":
             st.success(f"Saved to {expense_type} Expenses!")
             st.rerun()
 
-# --- 5. ALL RECORDS (UPDATED WITH ROOM FILTER) ---
+# --- 5. ALL RECORDS ---
 elif menu == "All Records":
     st.subheader("📋 All Records")
     tab1, tab2 = st.tabs(["Tenants (By Room)", "Expenses"])
     
     with tab1:
-        # Get list of rooms
         if not df_tenants.empty:
             unique_rooms = sorted(df_tenants["Room Number"].astype(str).unique())
-            
-            # Create a Filter Box
             selected_room = st.selectbox("🔍 Filter by Room Number:", ["Show All Rooms"] + unique_rooms)
-            
-            # Show Data based on selection
             if selected_room == "Show All Rooms":
                 st.dataframe(df_tenants.sort_values(by="Room Number"))
             else:
-                filtered_df = df_tenants[df_tenants["Room Number"].astype(str) == selected_room]
-                st.dataframe(filtered_df)
-                st.info(f"Showing {len(filtered_df)} tenant(s) in Room {selected_room}")
+                st.dataframe(df_tenants[df_tenants["Room Number"].astype(str) == selected_room])
         else:
             st.warning("No tenants found.")
 
