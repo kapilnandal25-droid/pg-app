@@ -49,30 +49,37 @@ def load_data(tab_name):
         df = pd.DataFrame(data)
         return df
     except:
-        return pd.DataFrame() # Return empty if tab missing
+        return pd.DataFrame() 
 
 def save_rent_payment(tenant_name, month, paid_amt, balance, room):
+    # --- FIX IS HERE: Convert to normal Python numbers ---
+    paid_amt = int(paid_amt)
+    balance = int(balance)
+    # -----------------------------------------------------
+
     # 1. Update Tenant Status (Main Sheet)
     ws_tenants = get_worksheet("Tenants")
     cell = ws_tenants.find(tenant_name)
     if cell:
-        # Col 6 = Last Paid Month, Col 8 = Promise Date (Clear it), Col 9 = Balance
         ws_tenants.update_cell(cell.row, 6, month) 
         ws_tenants.update_cell(cell.row, 8, "") 
         ws_tenants.update_cell(cell.row, 9, balance)
         
-    # 2. Save to History (For Month-wise Record)
+    # 2. Save to History
     ws_history = get_worksheet("Rent_History")
     today = datetime.now().strftime("%Y-%m-%d")
     ws_history.append_row([today, tenant_name, month, paid_amt, balance])
 
 def save_loan(loan_data):
     ws = get_worksheet("Loans")
-    ws.append_row([str(loan_data["Date"]), loan_data["Type"], loan_data["Person"], loan_data["Amount"], "Pending", loan_data["Note"]])
+    # Convert amount to int just in case
+    amount = int(loan_data["Amount"])
+    ws.append_row([str(loan_data["Date"]), loan_data["Type"], loan_data["Person"], amount, "Pending", loan_data["Note"]])
 
 def save_expense(expense_data):
     worksheet = get_worksheet("Expenses")
-    worksheet.append_row([str(expense_data["Date"]), expense_data["Category"], expense_data["Amount"], expense_data["Note"], expense_data["Type"]])
+    amount = int(expense_data["Amount"])
+    worksheet.append_row([str(expense_data["Date"]), expense_data["Category"], amount, expense_data["Note"], expense_data["Type"]])
 
 def update_promise_date(tenant_name, new_date):
     ws = get_worksheet("Tenants")
@@ -99,8 +106,11 @@ menu = st.sidebar.selectbox("Menu", ["Dashboard", "Manage Rent", "Debt Tracker (
 # --- 1. DASHBOARD ---
 if menu == "Dashboard":
     # Revenue Calculation
-    df_tenants['Rent Amount'] = pd.to_numeric(df_tenants['Rent Amount'], errors='coerce').fillna(0)
-    total_revenue = df_tenants['Rent Amount'].sum()
+    if not df_tenants.empty and 'Rent Amount' in df_tenants.columns:
+        df_tenants['Rent Amount'] = pd.to_numeric(df_tenants['Rent Amount'], errors='coerce').fillna(0)
+        total_revenue = df_tenants['Rent Amount'].sum()
+    else:
+        total_revenue = 0
     
     # Expense Calculation
     business_exp = 0
@@ -122,31 +132,28 @@ if menu == "Dashboard":
 
     st.subheader("🏢 Business Snapshot")
     c1, c2, c3 = st.columns(3)
-    c1.metric("Revenue", f"₹{total_revenue:,}")
-    c2.metric("Expenses", f"₹{business_exp:,}")
-    c3.metric("Profit", f"₹{total_revenue - business_exp:,}")
+    c1.metric("Revenue", f"₹{int(total_revenue):,}")
+    c2.metric("Expenses", f"₹{int(business_exp):,}")
+    c3.metric("Profit", f"₹{int(total_revenue - business_exp):,}")
     
     st.divider()
     
     st.subheader("📒 Debt & Personal")
     c4, c5, c6 = st.columns(3)
-    c4.metric("Personal Spent", f"₹{personal_exp:,}")
-    c5.metric("I need to Collect", f"₹{to_collect:,}", delta_color="normal")
-    c6.metric("I need to Pay", f"₹{to_pay:,}", delta_color="inverse")
+    c4.metric("Personal Spent", f"₹{int(personal_exp):,}")
+    c5.metric("I need to Collect", f"₹{int(to_collect):,}", delta_color="normal")
+    c6.metric("I need to Pay", f"₹{int(to_pay):,}", delta_color="inverse")
 
-# --- 2. MANAGE RENT (UPDATED) ---
+# --- 2. MANAGE RENT ---
 elif menu == "Manage Rent":
     st.subheader("Rent Collection")
     
     if not df_tenants.empty:
-        # Get Current Month to check for ticks
-        current_month_short = datetime.now().strftime("%b").lower() # e.g. "feb"
+        current_month_short = datetime.now().strftime("%b").lower() 
         
-        # Helper: Create list with Tick Marks
         tenant_options = []
         raw_names = []
         
-        # Sort by Room Number first
         if "Room Number" in df_tenants.columns:
             df_tenants = df_tenants.sort_values(by="Room Number")
             
@@ -155,7 +162,6 @@ elif menu == "Manage Rent":
             room = row["Room Number"]
             last_paid = str(row["Last Rent Paid (Month)"]).lower()
             
-            # Tick Logic: If last paid month matches current month (or user typed full name)
             if current_month_short in last_paid:
                 display_name = f"{name} (Room {room}) ✅"
             else:
@@ -164,19 +170,14 @@ elif menu == "Manage Rent":
             tenant_options.append(display_name)
             raw_names.append(name)
             
-        # Select Tenant
         selected_display = st.selectbox("Select Tenant", tenant_options)
-        
-        # Find the real name from the selection
         real_name_index = tenant_options.index(selected_display)
         tenant_name = raw_names[real_name_index]
         
-        # Get Data
         row = df_tenants[df_tenants["Tenant Name"] == tenant_name].iloc[0]
-        rent_amt = row["Rent Amount"]
+        rent_amt = int(row["Rent Amount"])
         phone = str(row["Phone"])
         
-        # Check Balance (Column I might be empty initially)
         try:
             old_balance = int(row["Balance"])
         except:
@@ -190,19 +191,18 @@ elif menu == "Manage Rent":
         else:
             c2.success("✅ No previous balance")
 
-        # --- PAYMENT FORM ---
         with st.form("rent_pay"):
             st.write("### 💵 Record Payment")
             col_a, col_b = st.columns(2)
             month = col_a.selectbox("For Month", ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"])
             
-            # Auto-fill amount (Rent + Old Balance)
             total_due = rent_amt + old_balance
             paid_amount = col_b.number_input("Amount Received", value=total_due, step=500)
             
             if st.form_submit_button("Save Payment"):
                 new_balance = total_due - paid_amount
-                save_rent_payment(tenant_name, month, paid_amount, new_balance, row["Room Number"])
+                # Pass explicit integers to function
+                save_rent_payment(tenant_name, month, int(paid_amount), int(new_balance), row["Room Number"])
                 
                 if new_balance > 0:
                     st.warning(f"Saved! Tenant still owes ₹{new_balance}")
@@ -211,15 +211,12 @@ elif menu == "Manage Rent":
                     st.success("Full Payment Recorded!")
                 st.rerun()
 
-        # --- WHATSAPP REMINDER ---
         st.write("---")
         st.write("### 💬 WhatsApp Options")
         
-        # Option 1: Full Payment
         msg_full = f"Hi {tenant_name}, your rent of ₹{total_due} is due. Please pay soon."
         link_full = f"https://wa.me/{phone}?text={urllib.parse.quote(msg_full)}"
         
-        # Option 2: Balance Reminder
         if old_balance > 0:
             msg_bal = f"Hi {tenant_name}, you have a pending balance of ₹{old_balance}. Please clear it."
             link_bal = f"https://wa.me/{phone}?text={urllib.parse.quote(msg_bal)}"
@@ -227,7 +224,7 @@ elif menu == "Manage Rent":
         
         st.markdown(f"[👉 **Send Rent Reminder**]({link_full})")
 
-# --- 3. DEBT TRACKER (NEW) ---
+# --- 3. DEBT TRACKER ---
 elif menu == "Debt Tracker (Udhaar)":
     st.subheader("📒 Manage Debts & Loans")
     
@@ -246,7 +243,6 @@ elif menu == "Debt Tracker (Udhaar)":
             st.success("Saved!")
             st.rerun()
             
-    # Show Table
     if not df_loans.empty:
         st.write("---")
         st.write("### Pending List")
@@ -278,7 +274,6 @@ elif menu == "All Records":
     with tab1:
         st.dataframe(df_tenants)
     with tab2:
-        # Load History Tab
         try:
             df_hist = load_data("Rent_History")
             st.dataframe(df_hist)
