@@ -81,15 +81,34 @@ def save_loan(loan_data):
     amount = int(loan_data["Amount"])
     ws.append_row([str(loan_data["Date"]), loan_data["Type"], loan_data["Person"], amount, "Pending", loan_data["Note"]])
 
-def mark_loan_cleared(person_name, amount, l_type):
+# --- UPDATED FUNCTION: Handles Partial Payments ---
+def update_loan_balance(person_name, original_amount, repay_amount, l_type, old_note):
     ws = get_worksheet("Loans")
     records = ws.get_all_records()
-    # Loop to find the matching row
+    
+    # Calculate new balance
+    original_amount = int(original_amount)
+    repay_amount = int(repay_amount)
+    new_balance = original_amount - repay_amount
+    
     for i, r in enumerate(records):
-        # Check if name, amount, type, and status match
-        if str(r["Person"]) == person_name and str(r["Amount"]) == str(amount) and r["Type"] == l_type and r["Status"] == "Pending":
-            # Update Status Column (Column E is the 5th column)
-            ws.update_cell(i + 2, 5, "Cleared") 
+        # Find matching row
+        if str(r["Person"]) == person_name and str(r["Amount"]) == str(original_amount) and r["Type"] == l_type and r["Status"] == "Pending":
+            
+            row_num = i + 2
+            today_str = datetime.now().strftime("%d-%b")
+            
+            if new_balance <= 0:
+                # FULL PAYMENT: Mark Cleared
+                ws.update_cell(row_num, 5, "Cleared") 
+                ws.update_cell(row_num, 4, 0) # Amount becomes 0
+            else:
+                # PARTIAL PAYMENT: Update Amount & Note
+                ws.update_cell(row_num, 4, new_balance) # Update Amount
+                
+                # Update Note to show history
+                new_note = f"{old_note} | Paid {repay_amount} on {today_str}"
+                ws.update_cell(row_num, 6, new_note)
             return
 
 def save_expense(expense_data):
@@ -157,7 +176,7 @@ if menu == "Dashboard":
     c5.metric("I need to Collect", f"₹{int(to_collect):,}", delta_color="normal")
     c6.metric("I need to Pay", f"₹{int(to_pay):,}", delta_color="inverse")
 
-# --- 2. ADD TENANT (RESTORED) ---
+# --- 2. ADD TENANT ---
 elif menu == "Add Tenant":
     st.subheader("Add New Tenant")
     with st.form("add_tenant"):
@@ -260,7 +279,7 @@ elif menu == "Manage Rent":
 elif menu == "Debt Tracker (Udhaar)":
     st.subheader("📒 Manage Debts & Loans")
     
-    # 1. FORM TO ADD LOAN
+    # Add Loan Form
     with st.expander("➕ Add New Loan Record", expanded=False):
         with st.form("add_loan"):
             col1, col2 = st.columns(2)
@@ -277,7 +296,7 @@ elif menu == "Debt Tracker (Udhaar)":
                 st.success("Saved!")
                 st.rerun()
             
-    # 2. LIST OF ACTIVE LOANS (WITH CLEAR BUTTON)
+    # List of Active Loans
     st.write("---")
     st.write("### ⏳ Active Loans")
     
@@ -286,23 +305,21 @@ elif menu == "Debt Tracker (Udhaar)":
         
         if not pending_df.empty:
             for index, row in pending_df.iterrows():
-                # Display each loan as a card
-                c1, c2, c3, c4 = st.columns([2, 2, 2, 2])
-                c1.write(f"**{row['Person']}**")
-                
-                # Color code: Green if we gave money (Asset), Red if we took (Liability)
-                if row['Type'] == "Given (Lent)":
-                    c2.markdown(f":green[Given: ₹{row['Amount']}]")
-                else:
-                    c2.markdown(f":red[Taken: ₹{row['Amount']}]")
+                # Card Style Layout
+                with st.expander(f"**{row['Person']}** |  {row['Type']}  |  ₹{row['Amount']}"):
+                    st.caption(f"Date: {row['Date']} | Note: {row['Note']}")
                     
-                c3.caption(f"{row['Date']}")
-                
-                # The "Mark Cleared" Button
-                if c4.button("Mark Settled", key=f"btn_{index}"):
-                    mark_loan_cleared(row["Person"], row["Amount"], row["Type"])
-                    st.success("Loan updated to Cleared!")
-                    st.rerun()
+                    # PARTIAL PAYMENT CALCULATOR
+                    col_pay1, col_pay2 = st.columns([2, 1])
+                    pay_amt = col_pay1.number_input("Amount Paid Now", min_value=0, max_value=int(row['Amount']), key=f"pay_{index}")
+                    
+                    if col_pay2.button("Update Record", key=f"btn_{index}"):
+                        if pay_amt > 0:
+                            update_loan_balance(row["Person"], row["Amount"], pay_amt, row["Type"], row["Note"])
+                            st.success("Updated!")
+                            st.rerun()
+                        else:
+                            st.warning("Enter amount > 0")
         else:
             st.success("No pending loans! You are debt free.")
     else:
