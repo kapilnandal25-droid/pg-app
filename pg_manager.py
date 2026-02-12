@@ -30,10 +30,6 @@ def check_password():
 if not check_password():
     st.stop()
 
-# =========================================================
-#  🏁 MAIN APP STARTS HERE
-# =========================================================
-
 st.title("💰 Total Finance Manager")
 
 # --- BACKEND FUNCTIONS ---
@@ -57,7 +53,7 @@ def save_new_tenant(tenant_data):
         tenant_data["Tenant Name"], tenant_data["Room Number"],
         tenant_data["Phone"], tenant_data["Rent Amount"],
         str(tenant_data["Move-In Date"]), tenant_data["Last Rent Paid (Month)"],
-        tenant_data["Status"], "", "" # Columns for Promise Date and Balance
+        tenant_data["Status"], "", "" 
     ]
     worksheet.append_row(row)
 
@@ -81,32 +77,28 @@ def save_loan(loan_data):
     amount = int(loan_data["Amount"])
     ws.append_row([str(loan_data["Date"]), loan_data["Type"], loan_data["Person"], amount, "Pending", loan_data["Note"]])
 
-# --- UPDATED FUNCTION: Handles Partial Payments ---
 def update_loan_balance(person_name, original_amount, repay_amount, l_type, old_note):
     ws = get_worksheet("Loans")
     records = ws.get_all_records()
     
-    # Calculate new balance
     original_amount = int(original_amount)
     repay_amount = int(repay_amount)
     new_balance = original_amount - repay_amount
     
     for i, r in enumerate(records):
-        # Find matching row
-        if str(r["Person"]) == person_name and str(r["Amount"]) == str(original_amount) and r["Type"] == l_type and r["Status"] == "Pending":
+        # HELPER: Check both "Person" and "Person Name" to match sheet
+        sheet_person = str(r.get("Person") or r.get("Person Name"))
+        
+        if sheet_person == person_name and str(r["Amount"]) == str(original_amount) and r["Type"] == l_type and r["Status"] == "Pending":
             
             row_num = i + 2
             today_str = datetime.now().strftime("%d-%b")
             
             if new_balance <= 0:
-                # FULL PAYMENT: Mark Cleared
                 ws.update_cell(row_num, 5, "Cleared") 
-                ws.update_cell(row_num, 4, 0) # Amount becomes 0
+                ws.update_cell(row_num, 4, 0)
             else:
-                # PARTIAL PAYMENT: Update Amount & Note
-                ws.update_cell(row_num, 4, new_balance) # Update Amount
-                
-                # Update Note to show history
+                ws.update_cell(row_num, 4, new_balance)
                 new_note = f"{old_note} | Paid {repay_amount} on {today_str}"
                 ws.update_cell(row_num, 6, new_note)
             return
@@ -115,12 +107,6 @@ def save_expense(expense_data):
     worksheet = get_worksheet("Expenses")
     amount = int(expense_data["Amount"])
     worksheet.append_row([str(expense_data["Date"]), expense_data["Category"], amount, expense_data["Note"], expense_data["Type"]])
-
-def update_promise_date(tenant_name, new_date):
-    ws = get_worksheet("Tenants")
-    cell = ws.find(tenant_name)
-    if cell:
-        ws.update_cell(cell.row, 8, str(new_date))
 
 # --- LOAD DATA ---
 try:
@@ -140,12 +126,14 @@ menu = st.sidebar.selectbox("Menu", ["Dashboard", "Add Tenant", "Manage Rent", "
 
 # --- 1. DASHBOARD ---
 if menu == "Dashboard":
+    # 1. Revenue
     if not df_tenants.empty and 'Rent Amount' in df_tenants.columns:
         df_tenants['Rent Amount'] = pd.to_numeric(df_tenants['Rent Amount'], errors='coerce').fillna(0)
         total_revenue = df_tenants['Rent Amount'].sum()
     else:
         total_revenue = 0
     
+    # 2. Expenses
     business_exp = 0
     personal_exp = 0
     if not df_expenses.empty:
@@ -154,6 +142,7 @@ if menu == "Dashboard":
         business_exp = df_expenses[df_expenses['Type'] == 'Business']['Amount'].sum()
         personal_exp = df_expenses[df_expenses['Type'].isin(['Personal', 'Home'])]['Amount'].sum()
     
+    # 3. Loans
     to_collect = 0
     to_pay = 0
     if not df_loans.empty:
@@ -202,7 +191,6 @@ elif menu == "Manage Rent":
     
     if not df_tenants.empty:
         current_month_short = datetime.now().strftime("%b").lower() 
-        
         tenant_options = []
         raw_names = []
         
@@ -213,12 +201,10 @@ elif menu == "Manage Rent":
             name = row["Tenant Name"]
             room = row["Room Number"]
             last_paid = str(row["Last Rent Paid (Month)"]).lower()
-            
             if current_month_short in last_paid:
                 display_name = f"{name} (Room {room}) ✅"
             else:
                 display_name = f"{name} (Room {room})"
-            
             tenant_options.append(display_name)
             raw_names.append(name)
             
@@ -229,7 +215,6 @@ elif menu == "Manage Rent":
         row = df_tenants[df_tenants["Tenant Name"] == tenant_name].iloc[0]
         rent_amt = int(row["Rent Amount"])
         phone = str(row["Phone"])
-        
         try:
             old_balance = int(row["Balance"])
         except:
@@ -247,75 +232,73 @@ elif menu == "Manage Rent":
             st.write("### 💵 Record Payment")
             col_a, col_b = st.columns(2)
             month = col_a.selectbox("For Month", ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"])
-            
             total_due = rent_amt + old_balance
             paid_amount = col_b.number_input("Amount Received", value=total_due, step=500)
             
             if st.form_submit_button("Save Payment"):
                 new_balance = total_due - paid_amount
                 save_rent_payment(tenant_name, month, int(paid_amount), int(new_balance), row["Room Number"])
-                
-                if new_balance > 0:
-                    st.warning(f"Saved! Tenant still owes ₹{new_balance}")
-                else:
-                    st.balloons()
-                    st.success("Full Payment Recorded!")
+                st.balloons()
+                st.success("Full Payment Recorded!")
                 st.rerun()
 
         st.write("---")
         st.write("### 💬 WhatsApp Options")
-        
         msg_full = f"Hi {tenant_name}, your rent of ₹{total_due} is due. Please pay soon."
         link_full = f"https://wa.me/{phone}?text={urllib.parse.quote(msg_full)}"
-        
         if old_balance > 0:
             msg_bal = f"Hi {tenant_name}, you have a pending balance of ₹{old_balance}. Please clear it."
             link_bal = f"https://wa.me/{phone}?text={urllib.parse.quote(msg_bal)}"
             st.markdown(f"[👉 **Remind about Balance (₹{old_balance})**]({link_bal})")
-        
         st.markdown(f"[👉 **Send Rent Reminder**]({link_full})")
 
-# --- 4. DEBT TRACKER (UPDATED) ---
+# --- 4. DEBT TRACKER (ROBUST FIX) ---
 elif menu == "Debt Tracker (Udhaar)":
     st.subheader("📒 Manage Debts & Loans")
     
-    # Add Loan Form
     with st.expander("➕ Add New Loan Record", expanded=False):
         with st.form("add_loan"):
             col1, col2 = st.columns(2)
             l_type = col1.selectbox("Type", ["Given (Lent)", "Taken (Borrow)"])
             l_person = col2.text_input("Person Name")
-            
             col3, col4 = st.columns(2)
             l_amount = col3.number_input("Amount", step=100)
             l_date = col4.date_input("Date")
             l_note = st.text_input("Note (Optional)")
-            
             if st.form_submit_button("Save Record"):
                 save_loan({"Date": l_date, "Type": l_type, "Person": l_person, "Amount": l_amount, "Note": l_note})
                 st.success("Saved!")
                 st.rerun()
             
-    # List of Active Loans
     st.write("---")
     st.write("### ⏳ Active Loans")
     
     if not df_loans.empty:
+        # --- ROBUST FIX: Auto-rename 'Person Name' to 'Person' ---
+        if "Person Name" in df_loans.columns:
+            df_loans = df_loans.rename(columns={"Person Name": "Person"})
+        # ---------------------------------------------------------
+        
         pending_df = df_loans[df_loans['Status'] == 'Pending']
         
         if not pending_df.empty:
             for index, row in pending_df.iterrows():
-                # Card Style Layout
-                with st.expander(f"**{row['Person']}** |  {row['Type']}  |  ₹{row['Amount']}"):
-                    st.caption(f"Date: {row['Date']} | Note: {row['Note']}")
+                # Safe Access using .get() to prevent crashes
+                p_name = row.get("Person") or row.get("Person Name") or "Unknown"
+                p_amt = row.get("Amount", 0)
+                p_type = row.get("Type", "Loan")
+                p_date = row.get("Date", "")
+                p_note = row.get("Note", "")
+
+                with st.expander(f"**{p_name}** |  {p_type}  |  ₹{p_amt}"):
+                    st.caption(f"Date: {p_date} | Note: {p_note}")
                     
-                    # PARTIAL PAYMENT CALCULATOR
                     col_pay1, col_pay2 = st.columns([2, 1])
-                    pay_amt = col_pay1.number_input("Amount Paid Now", min_value=0, max_value=int(row['Amount']), key=f"pay_{index}")
+                    pay_amt = col_pay1.number_input("Amount Paid Now", min_value=0, max_value=int(p_amt), key=f"pay_{index}")
                     
                     if col_pay2.button("Update Record", key=f"btn_{index}"):
                         if pay_amt > 0:
-                            update_loan_balance(row["Person"], row["Amount"], pay_amt, row["Type"], row["Note"])
+                            update_loan_balance(p_name, p_amt, pay_amt, p_type, p_note)
                             st.success("Updated!")
                             st.rerun()
                         else:
@@ -335,7 +318,6 @@ elif menu == "Expense Tracker":
         amount = col2.number_input("Amount", step=100)
         category = st.selectbox("Category", ["Electricity", "Food/Groceries", "Repairs", "Shopping", "Fuel", "School Fees", "Other"])
         note = st.text_input("Note")
-        
         if st.form_submit_button("Save"):
             save_expense({"Date": date, "Category": category, "Amount": amount, "Note": note, "Type": expense_type})
             st.success("Saved!")
@@ -344,7 +326,6 @@ elif menu == "Expense Tracker":
 # --- 6. ALL RECORDS ---
 elif menu == "All Records":
     tab1, tab2, tab3, tab4 = st.tabs(["Tenants", "Rent History", "Expenses", "Loans"])
-    
     with tab1:
         st.dataframe(df_tenants)
     with tab2:
