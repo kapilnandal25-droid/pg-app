@@ -51,13 +51,20 @@ def load_data(tab_name):
     except:
         return pd.DataFrame() 
 
+def save_new_tenant(tenant_data):
+    worksheet = get_worksheet("Tenants")
+    row = [
+        tenant_data["Tenant Name"], tenant_data["Room Number"],
+        tenant_data["Phone"], tenant_data["Rent Amount"],
+        str(tenant_data["Move-In Date"]), tenant_data["Last Rent Paid (Month)"],
+        tenant_data["Status"], "", "" # Columns for Promise Date and Balance
+    ]
+    worksheet.append_row(row)
+
 def save_rent_payment(tenant_name, month, paid_amt, balance, room):
-    # --- FIX IS HERE: Convert to normal Python numbers ---
     paid_amt = int(paid_amt)
     balance = int(balance)
-    # -----------------------------------------------------
-
-    # 1. Update Tenant Status (Main Sheet)
+    
     ws_tenants = get_worksheet("Tenants")
     cell = ws_tenants.find(tenant_name)
     if cell:
@@ -65,16 +72,25 @@ def save_rent_payment(tenant_name, month, paid_amt, balance, room):
         ws_tenants.update_cell(cell.row, 8, "") 
         ws_tenants.update_cell(cell.row, 9, balance)
         
-    # 2. Save to History
     ws_history = get_worksheet("Rent_History")
     today = datetime.now().strftime("%Y-%m-%d")
     ws_history.append_row([today, tenant_name, month, paid_amt, balance])
 
 def save_loan(loan_data):
     ws = get_worksheet("Loans")
-    # Convert amount to int just in case
     amount = int(loan_data["Amount"])
     ws.append_row([str(loan_data["Date"]), loan_data["Type"], loan_data["Person"], amount, "Pending", loan_data["Note"]])
+
+def mark_loan_cleared(person_name, amount, l_type):
+    ws = get_worksheet("Loans")
+    records = ws.get_all_records()
+    # Loop to find the matching row
+    for i, r in enumerate(records):
+        # Check if name, amount, type, and status match
+        if str(r["Person"]) == person_name and str(r["Amount"]) == str(amount) and r["Type"] == l_type and r["Status"] == "Pending":
+            # Update Status Column (Column E is the 5th column)
+            ws.update_cell(i + 2, 5, "Cleared") 
+            return
 
 def save_expense(expense_data):
     worksheet = get_worksheet("Expenses")
@@ -101,18 +117,16 @@ if st.sidebar.button("🔒 Logout"):
     del st.session_state["password_correct"]
     st.rerun()
 
-menu = st.sidebar.selectbox("Menu", ["Dashboard", "Manage Rent", "Debt Tracker (Udhaar)", "Expense Tracker", "All Records"])
+menu = st.sidebar.selectbox("Menu", ["Dashboard", "Add Tenant", "Manage Rent", "Debt Tracker (Udhaar)", "Expense Tracker", "All Records"])
 
 # --- 1. DASHBOARD ---
 if menu == "Dashboard":
-    # Revenue Calculation
     if not df_tenants.empty and 'Rent Amount' in df_tenants.columns:
         df_tenants['Rent Amount'] = pd.to_numeric(df_tenants['Rent Amount'], errors='coerce').fillna(0)
         total_revenue = df_tenants['Rent Amount'].sum()
     else:
         total_revenue = 0
     
-    # Expense Calculation
     business_exp = 0
     personal_exp = 0
     if not df_expenses.empty:
@@ -121,7 +135,6 @@ if menu == "Dashboard":
         business_exp = df_expenses[df_expenses['Type'] == 'Business']['Amount'].sum()
         personal_exp = df_expenses[df_expenses['Type'].isin(['Personal', 'Home'])]['Amount'].sum()
     
-    # Loan Calculation
     to_collect = 0
     to_pay = 0
     if not df_loans.empty:
@@ -144,7 +157,27 @@ if menu == "Dashboard":
     c5.metric("I need to Collect", f"₹{int(to_collect):,}", delta_color="normal")
     c6.metric("I need to Pay", f"₹{int(to_pay):,}", delta_color="inverse")
 
-# --- 2. MANAGE RENT ---
+# --- 2. ADD TENANT (RESTORED) ---
+elif menu == "Add Tenant":
+    st.subheader("Add New Tenant")
+    with st.form("add_tenant"):
+        name = st.text_input("Name")
+        room = st.text_input("Room Number")
+        phone = st.text_input("Phone (Start with 91...)")
+        rent = st.number_input("Rent Amount", step=500)
+        move_in = st.date_input("Move-In Date")
+        
+        if st.form_submit_button("Save New Tenant"):
+            save_new_tenant({
+                "Tenant Name": name, "Room Number": room, "Phone": phone,
+                "Rent Amount": rent, "Move-In Date": move_in,
+                "Last Rent Paid (Month)": "None", "Status": "Active"
+            })
+            st.success("Tenant Added Successfully!")
+            st.balloons()
+            st.rerun()
+
+# --- 3. MANAGE RENT ---
 elif menu == "Manage Rent":
     st.subheader("Rent Collection")
     
@@ -201,7 +234,6 @@ elif menu == "Manage Rent":
             
             if st.form_submit_button("Save Payment"):
                 new_balance = total_due - paid_amount
-                # Pass explicit integers to function
                 save_rent_payment(tenant_name, month, int(paid_amount), int(new_balance), row["Room Number"])
                 
                 if new_balance > 0:
@@ -224,34 +256,59 @@ elif menu == "Manage Rent":
         
         st.markdown(f"[👉 **Send Rent Reminder**]({link_full})")
 
-# --- 3. DEBT TRACKER ---
+# --- 4. DEBT TRACKER (UPDATED) ---
 elif menu == "Debt Tracker (Udhaar)":
     st.subheader("📒 Manage Debts & Loans")
     
-    with st.form("add_loan"):
-        col1, col2 = st.columns(2)
-        l_type = col1.selectbox("Type", ["Given (Lent)", "Taken (Borrow)"])
-        l_person = col2.text_input("Person Name")
-        
-        col3, col4 = st.columns(2)
-        l_amount = col3.number_input("Amount", step=100)
-        l_date = col4.date_input("Date")
-        l_note = st.text_input("Note (Optional)")
-        
-        if st.form_submit_button("Save Record"):
-            save_loan({"Date": l_date, "Type": l_type, "Person": l_person, "Amount": l_amount, "Note": l_note})
-            st.success("Saved!")
-            st.rerun()
+    # 1. FORM TO ADD LOAN
+    with st.expander("➕ Add New Loan Record", expanded=False):
+        with st.form("add_loan"):
+            col1, col2 = st.columns(2)
+            l_type = col1.selectbox("Type", ["Given (Lent)", "Taken (Borrow)"])
+            l_person = col2.text_input("Person Name")
             
+            col3, col4 = st.columns(2)
+            l_amount = col3.number_input("Amount", step=100)
+            l_date = col4.date_input("Date")
+            l_note = st.text_input("Note (Optional)")
+            
+            if st.form_submit_button("Save Record"):
+                save_loan({"Date": l_date, "Type": l_type, "Person": l_person, "Amount": l_amount, "Note": l_note})
+                st.success("Saved!")
+                st.rerun()
+            
+    # 2. LIST OF ACTIVE LOANS (WITH CLEAR BUTTON)
+    st.write("---")
+    st.write("### ⏳ Active Loans")
+    
     if not df_loans.empty:
-        st.write("---")
-        st.write("### Pending List")
         pending_df = df_loans[df_loans['Status'] == 'Pending']
-        st.dataframe(pending_df)
+        
+        if not pending_df.empty:
+            for index, row in pending_df.iterrows():
+                # Display each loan as a card
+                c1, c2, c3, c4 = st.columns([2, 2, 2, 2])
+                c1.write(f"**{row['Person']}**")
+                
+                # Color code: Green if we gave money (Asset), Red if we took (Liability)
+                if row['Type'] == "Given (Lent)":
+                    c2.markdown(f":green[Given: ₹{row['Amount']}]")
+                else:
+                    c2.markdown(f":red[Taken: ₹{row['Amount']}]")
+                    
+                c3.caption(f"{row['Date']}")
+                
+                # The "Mark Cleared" Button
+                if c4.button("Mark Settled", key=f"btn_{index}"):
+                    mark_loan_cleared(row["Person"], row["Amount"], row["Type"])
+                    st.success("Loan updated to Cleared!")
+                    st.rerun()
+        else:
+            st.success("No pending loans! You are debt free.")
     else:
         st.info("No records found.")
 
-# --- 4. EXPENSE TRACKER ---
+# --- 5. EXPENSE TRACKER ---
 elif menu == "Expense Tracker":
     st.subheader("💸 Record Expense")
     with st.form("add_expense"):
@@ -267,9 +324,9 @@ elif menu == "Expense Tracker":
             st.success("Saved!")
             st.rerun()
 
-# --- 5. ALL RECORDS ---
+# --- 6. ALL RECORDS ---
 elif menu == "All Records":
-    tab1, tab2, tab3, tab4 = st.tabs(["Tenants", "Rent History (Month-wise)", "Expenses", "Loans"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Tenants", "Rent History", "Expenses", "Loans"])
     
     with tab1:
         st.dataframe(df_tenants)
